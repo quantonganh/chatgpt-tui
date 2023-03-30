@@ -2,6 +2,8 @@
 
 This is a simple terminal user interface for ChatGPT, written in Go with the [tview](https://github.com/rivo/tview) library.
 
+![chatgpt](./chatgpt.gif)
+
 ChatGPT is a chatbot that can generate human-like responses to text messages. In this terminal UI, users can send messages to ChatGPT
 and receive responses from the chatbot.
 
@@ -12,7 +14,7 @@ You can download the latest binary from the [release page](https://github.com/qu
 ### Install via go
 
 ```
-go install github.com/quantonganh/chatgpt
+go install github.com/quantonganh/chatgpt@latest
 ```
 
 ## Usage
