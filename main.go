@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -26,13 +25,11 @@ const (
 	roleAssistant = "assistant"
 
 	prefixSuggestTitle = "suggest me a short title for "
-	suffixTime         = ":time"
 )
 
-type history struct {
-	title        string
-	conversation string
-	time         time.Time
+type Conversation struct {
+	Time     int64     `json:"time"`
+	Messages []Message `json:"messages"`
 }
 
 func main() {
@@ -41,8 +38,6 @@ func main() {
 		fmt.Println("Please set `OPENAI_API_KEY` environment variable. You can find your API key at https://platform.openai.com/account/api-keys.")
 		return
 	}
-
-	app := tview.NewApplication()
 
 	home, err := homedir.Dir()
 	if err != nil {
@@ -59,7 +54,13 @@ func main() {
 		log.Panic(err)
 	}
 	defer db.Close()
+	db.CreateIndex("time", "*", buntdb.IndexJSON("time"))
 
+	textArea := tview.NewTextArea()
+	textArea.SetTitle("Question").SetBorder(true)
+
+	// tview.Styles.PrimitiveBackgroundColor = tcell.ColorDefault
+	app := tview.NewApplication()
 	textView := tview.NewTextView().
 		SetChangedFunc(func() {
 			app.Draw()
@@ -68,13 +69,54 @@ func main() {
 		SetRegions(true).
 		SetWordWrap(true)
 	textView.SetTitle("Conversation").SetBorder(true)
-
-	textArea := tview.NewTextArea()
-	textArea.SetTitle("Question").SetBorder(true)
+	textView.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		switch event.Key() {
+		case tcell.KeyEnter:
+			app.SetFocus(textArea)
+		}
+		return event
+	})
 
 	list := tview.NewList()
 	list.SetTitle("History").SetBorder(true)
-	messages := make([]Message, 0)
+	var (
+		m         = make(map[string]*Conversation)
+		isNewChat bool
+	)
+	db.View(func(tx *buntdb.Tx) error {
+		err := tx.Descend("time", func(key, value string) bool {
+			var c *Conversation
+			if err := json.Unmarshal([]byte(value), &c); err == nil {
+				m[key] = c
+
+				list.AddItem(key, "", rune(0), func() {
+					textView.SetText(toConversation(c.Messages))
+				})
+			}
+			return true
+		})
+		return err
+	})
+
+	if list.GetItemCount() > 0 {
+		title, _ := list.GetItemText(list.GetCurrentItem())
+		textView.SetText(toConversation(m[title].Messages))
+	}
+
+	list.SetChangedFunc(func(index int, title string, secondaryText string, shortcut rune) {
+		if c, ok := m[title]; ok {
+			textView.SetText(toConversation(c.Messages))
+		}
+	})
+	list.SetSelectedFunc(func(index int, title string, secondaryText string, shortcut rune) {
+		if c, ok := m[title]; ok {
+			textView.SetText(toConversation(c.Messages))
+		}
+
+		textView.ScrollToEnd()
+		app.SetFocus(textArea)
+	})
+
 	list.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch event.Rune() {
 		case 'j':
@@ -92,108 +134,19 @@ func main() {
 
 			if list.GetItemCount() == 0 {
 				textView.Clear()
+				list.SetCurrentItem(-1)
+				app.SetFocus(textArea)
 			}
 
 			db.Update(func(tx *buntdb.Tx) error {
-				var title string
-				tx.AscendKeys(currentTitle, func(k, v string) bool {
-					if k == currentTitle {
-						title = k
-					}
-					return true
-				})
-
-				if _, err := tx.Delete(title); err != nil {
-					return err
-				}
-
-				if _, err := tx.Delete(fmt.Sprintf("%s%s", title, suffixTime)); err != nil {
-					return err
-				}
-
-				return nil
+				_, err := tx.Delete(currentTitle)
+				return err
 			})
+			delete(m, currentTitle)
 		}
 
 		return event
 	})
-	histories := make([]history, 0)
-	db.View(func(tx *buntdb.Tx) error {
-		err := tx.Ascend("", func(key, value string) bool {
-			h := history{}
-			if !strings.HasSuffix(key, suffixTime) {
-				h.title = key
-				h.conversation = value
-
-				err = db.View(func(tx *buntdb.Tx) error {
-					val, err := tx.Get(key + suffixTime)
-					if err != nil {
-						return err
-					}
-					t, err := time.Parse(time.RFC3339, val)
-					if err != nil {
-						return err
-					}
-					h.time = t
-					return nil
-				})
-				histories = append(histories, h)
-			}
-			return true
-		})
-		sort.Slice(histories, func(i, j int) bool {
-			return histories[i].time.After(histories[j].time)
-		})
-		return err
-	})
-	for i := range histories {
-		list.AddItem(histories[i].title, "", rune(0), func() {
-			textView.SetText(histories[i].conversation)
-		})
-	}
-	list.SetChangedFunc(func(index int, title string, secondaryText string, shortcut rune) {
-		db.View(func(tx *buntdb.Tx) error {
-			value, err := tx.Get(title)
-			if err != nil {
-				return err
-			}
-			if err := json.Unmarshal([]byte(value), &messages); err != nil {
-				return err
-			}
-			textView.SetText(toConversation(messages))
-			return nil
-		})
-	})
-	list.SetSelectedFunc(func(index int, title string, secondaryText string, shortcut rune) {
-		db.View(func(tx *buntdb.Tx) error {
-			value, err := tx.Get(title)
-			if err != nil {
-				return err
-			}
-			if err := json.Unmarshal([]byte(value), &messages); err != nil {
-				return err
-			}
-			textView.SetText(toConversation(messages))
-			return nil
-		})
-
-		app.SetFocus(textArea)
-	})
-
-	if list.GetItemCount() > 0 {
-		title, _ := list.GetItemText(list.GetCurrentItem())
-		db.View(func(tx *buntdb.Tx) error {
-			value, err := tx.Get(title)
-			if err != nil {
-				return err
-			}
-			if err := json.Unmarshal([]byte(value), &messages); err != nil {
-				return err
-			}
-			textView.SetText(toConversation(messages))
-			return nil
-		})
-	}
 
 	textArea.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch event.Key() {
@@ -211,6 +164,14 @@ func main() {
 			}
 			fmt.Fprintln(textView, "[red::]You:[-]")
 			fmt.Fprintf(textView, "%s\n\n", content)
+
+			messages := make([]Message, 0)
+			if list.GetItemCount() > 0 && !isNewChat {
+				title, _ := list.GetItemText(list.GetCurrentItem())
+				if c, ok := m[title]; ok {
+					messages = c.Messages
+				}
+			}
 
 			messages = append(messages, Message{
 				Role:    roleUser,
@@ -252,7 +213,7 @@ func main() {
 					Content: fullContent.String(),
 				})
 
-				if len(messages) == 2 {
+				if list.GetItemCount() == 0 || isNewChat {
 					titleCh := make(chan string)
 					go func() {
 						resp, err := createChatCompletion([]Message{
@@ -279,22 +240,24 @@ func main() {
 
 					list.InsertItem(0, strings.Trim(<-titleCh, "\""), "", rune(0), nil)
 					list.SetCurrentItem(0)
+
+					isNewChat = false
 				}
 
 				title, _ := list.GetItemText(list.GetCurrentItem())
-				value, err := json.Marshal(messages)
+				c := &Conversation{
+					Time:     time.Now().Unix(),
+					Messages: messages,
+				}
+				value, err := json.Marshal(c)
 				if err != nil {
 					log.Panic(err)
 				}
 				db.Update(func(tx *buntdb.Tx) error {
 					_, _, err := tx.Set(title, string(value), nil)
-					if err != nil {
-						return err
-					}
-
-					_, _, err = tx.Set(fmt.Sprintf("%s%s", title, suffixTime), time.Now().Format(time.RFC3339), nil)
 					return err
 				})
+				m[title] = c
 
 				fmt.Fprintf(textView, "\n\n")
 				textArea.SetDisabled(false)
@@ -306,7 +269,7 @@ func main() {
 	})
 
 	button := tview.NewButton("+ New chat").SetSelectedFunc(func() {
-		messages = nil
+		isNewChat = true
 		textView.Clear()
 		app.SetFocus(textArea)
 	})
