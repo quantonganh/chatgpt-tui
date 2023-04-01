@@ -25,6 +25,12 @@ const (
 	roleAssistant = "assistant"
 
 	prefixSuggestTitle = "suggest me a short title for "
+
+	pageMain        = "main"
+	pageDeleteTitle = "deleteTitle"
+
+	buttonCancel = "Cancel"
+	buttonDelete = "Delete"
 )
 
 type Conversation struct {
@@ -117,6 +123,10 @@ func main() {
 		app.SetFocus(textArea)
 	})
 
+	pages := tview.NewPages()
+	deleteTitleModal := tview.NewModal()
+	deleteTitleModal.AddButtons([]string{buttonCancel, buttonDelete})
+
 	list.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch event.Rune() {
 		case 'j':
@@ -130,19 +140,47 @@ func main() {
 		case 'd':
 			currentIndex := list.GetCurrentItem()
 			currentTitle, _ := list.GetItemText(currentIndex)
-			list.RemoveItem(currentIndex)
 
-			if list.GetItemCount() == 0 {
-				textView.Clear()
-				list.SetCurrentItem(-1)
-				app.SetFocus(textArea)
-			}
+			deleteTitleModal.SetText(fmt.Sprintf("Are you sure you want to delete \"%s\"?", currentTitle)).
+				SetFocus(0).
+				SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+					switch buttonLabel {
+					case buttonCancel:
+						pages.HidePage(pageDeleteTitle)
+						app.SetFocus(list)
 
-			db.Update(func(tx *buntdb.Tx) error {
-				_, err := tx.Delete(currentTitle)
-				return err
-			})
-			delete(m, currentTitle)
+					case buttonDelete:
+						list.RemoveItem(currentIndex)
+
+						if list.GetItemCount() == 0 {
+							textView.Clear()
+							list.SetCurrentItem(-1)
+							app.SetFocus(textArea)
+						}
+
+						db.Update(func(tx *buntdb.Tx) error {
+							_, err := tx.Delete(currentTitle)
+							return err
+						})
+						delete(m, currentTitle)
+
+						pages.HidePage(pageDeleteTitle)
+						if list.GetItemCount() > 0 {
+							app.SetFocus(list)
+						} else {
+							app.SetFocus(textArea)
+						}
+					}
+				}).
+				SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+					switch event.Key() {
+					case tcell.KeyESC:
+						pages.HidePage(pageDeleteTitle)
+						app.SetFocus(list)
+					}
+					return event
+				})
+			pages.ShowPage(pageDeleteTitle)
 		}
 
 		return event
@@ -285,8 +323,6 @@ func main() {
 			app.SetFocus(textView)
 		case tcell.KeyF4:
 			app.SetFocus(textArea)
-		case tcell.KeyESC:
-			app.Stop()
 		default:
 			return event
 		}
@@ -294,7 +330,7 @@ func main() {
 	})
 
 	help := tview.NewTextView().SetRegions(true).SetDynamicColors(true)
-	help.SetText("F1: new chat, F2: history, F3: conversation, F4: question, enter: submit, j/k: navigate, d: delete, esc: quit").SetTextAlign(tview.AlignCenter)
+	help.SetText("F1: new chat, F2: history, F3: conversation, F4: question, enter: submit, j/k: down/up, ctrl-f/b: page down/up, d: delete, ctrl-c: quit").SetTextAlign(tview.AlignCenter)
 
 	flex := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(tview.NewFlex().SetDirection(tview.FlexColumn).
@@ -305,7 +341,10 @@ func main() {
 				AddItem(textView, 0, 1, false).
 				AddItem(textArea, 5, 1, false), 0, 3, false), 0, 1, false).
 		AddItem(help, 1, 1, false)
-	if err := app.SetRoot(flex, true).SetFocus(textArea).Run(); err != nil {
+	pages.
+		AddPage(pageMain, flex, true, true).
+		AddPage(pageDeleteTitle, deleteTitleModal, true, false)
+	if err := app.SetRoot(pages, true).SetFocus(textArea).Run(); err != nil {
 		panic(err)
 	}
 }
