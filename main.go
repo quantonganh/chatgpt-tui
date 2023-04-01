@@ -27,6 +27,7 @@ const (
 	prefixSuggestTitle = "suggest me a short title for "
 
 	pageMain        = "main"
+	pageEditTitle   = "editTitle"
 	pageDeleteTitle = "deleteTitle"
 
 	buttonCancel = "Cancel"
@@ -124,10 +125,30 @@ func main() {
 	})
 
 	pages := tview.NewPages()
+	editTitleInputField := tview.NewInputField().
+		SetFieldWidth(40).
+		SetAcceptanceFunc(tview.InputFieldMaxLength(40))
+
 	deleteTitleModal := tview.NewModal()
 	deleteTitleModal.AddButtons([]string{buttonCancel, buttonDelete})
 
+	modal := func(p tview.Primitive, currentIndex int) tview.Primitive {
+		return tview.NewFlex().SetDirection(tview.FlexRow).
+			AddItem(tview.NewFlex().SetDirection(tview.FlexColumn).
+				AddItem(tview.NewFlex().SetDirection(tview.FlexRow).
+					AddItem(nil, 4+(currentIndex*2), 1, false).
+					AddItem(p, 1, 1, true).
+					AddItem(nil, 0, 1, false), 0, 1, true).
+				AddItem(tview.NewFlex().SetDirection(tview.FlexRow).
+					AddItem(nil, 0, 1, false).
+					AddItem(nil, 5, 1, false), 0, 3, false), 0, 1, true).
+			AddItem(nil, 1, 1, false)
+	}
+
 	list.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		currentIndex := list.GetCurrentItem()
+		currentTitle, _ := list.GetItemText(currentIndex)
+
 		switch event.Rune() {
 		case 'j':
 			if list.GetCurrentItem() < list.GetItemCount() {
@@ -137,10 +158,46 @@ func main() {
 			if list.GetCurrentItem() > 0 {
 				list.SetCurrentItem(list.GetCurrentItem() - 1)
 			}
-		case 'd':
-			currentIndex := list.GetCurrentItem()
-			currentTitle, _ := list.GetItemText(currentIndex)
+		case 'e':
+			editTitleInputField.
+				SetText(currentTitle).
+				SetDoneFunc(func(key tcell.Key) {
+					switch key {
+					case tcell.KeyESC:
+						pages.HidePage(pageEditTitle)
+						app.SetFocus(list)
+					case tcell.KeyEnter:
+						newTitle := editTitleInputField.GetText()
+						if newTitle != currentTitle {
+							c, _ := json.Marshal(m[currentTitle])
+							if err == nil {
+								db.Update(func(tx *buntdb.Tx) error {
+									_, _, err := tx.Set(newTitle, string(c), nil)
+									if err != nil {
+										return err
+									}
 
+									tx.Delete(currentTitle)
+
+									m[newTitle] = m[currentTitle]
+									delete(m, currentTitle)
+
+									list.RemoveItem(currentIndex)
+									list.InsertItem(currentIndex, newTitle, "", rune(0), nil)
+									list.SetCurrentItem(currentIndex)
+
+									return nil
+								})
+							}
+						}
+						pages.HidePage(pageEditTitle)
+						app.SetFocus(list)
+					}
+				}).
+				SetBorder(false)
+			pages.AddPage(pageEditTitle, modal(editTitleInputField, currentIndex), true, false)
+			pages.ShowPage(pageEditTitle)
+		case 'd':
 			deleteTitleModal.SetText(fmt.Sprintf("Are you sure you want to delete \"%s\"?", currentTitle)).
 				SetFocus(0).
 				SetDoneFunc(func(buttonIndex int, buttonLabel string) {
@@ -330,9 +387,9 @@ func main() {
 	})
 
 	help := tview.NewTextView().SetRegions(true).SetDynamicColors(true)
-	help.SetText("F1: new chat, F2: history, F3: conversation, F4: question, enter: submit, j/k: down/up, ctrl-f/b: page down/up, d: delete, ctrl-c: quit").SetTextAlign(tview.AlignCenter)
+	help.SetText("F1: new chat, F2: history, F3: conversation, F4: question, enter: submit, j/k: down/up, ctrl-f/b: page down/up, e: edit, d: delete, ctrl-c: quit").SetTextAlign(tview.AlignCenter)
 
-	flex := tview.NewFlex().SetDirection(tview.FlexRow).
+	mainFlex := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(tview.NewFlex().SetDirection(tview.FlexColumn).
 			AddItem(tview.NewFlex().SetDirection(tview.FlexRow).
 				AddItem(button, 3, 1, false).
@@ -342,7 +399,8 @@ func main() {
 				AddItem(textArea, 5, 1, false), 0, 3, false), 0, 1, false).
 		AddItem(help, 1, 1, false)
 	pages.
-		AddPage(pageMain, flex, true, true).
+		AddPage(pageMain, mainFlex, true, true).
+		AddPage(pageEditTitle, modal(editTitleInputField, list.GetCurrentItem()), true, false).
 		AddPage(pageDeleteTitle, deleteTitleModal, true, false)
 	if err := app.SetRoot(pages, true).SetFocus(textArea).Run(); err != nil {
 		panic(err)
