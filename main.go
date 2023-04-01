@@ -66,6 +66,9 @@ func main() {
 	textArea := tview.NewTextArea()
 	textArea.SetTitle("Question").SetBorder(true)
 
+	list := tview.NewList()
+	list.SetTitle("History").SetBorder(true)
+
 	// tview.Styles.PrimitiveBackgroundColor = tcell.ColorDefault
 	app := tview.NewApplication()
 	textView := tview.NewTextView().
@@ -78,14 +81,14 @@ func main() {
 	textView.SetTitle("Conversation").SetBorder(true)
 	textView.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch event.Key() {
+		case tcell.KeyESC:
+			app.SetFocus(list)
 		case tcell.KeyEnter:
 			app.SetFocus(textArea)
 		}
 		return event
 	})
 
-	list := tview.NewList()
-	list.SetTitle("History").SetBorder(true)
 	var (
 		m         = make(map[string]*Conversation)
 		isNewChat bool
@@ -245,6 +248,11 @@ func main() {
 
 	textArea.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch event.Key() {
+		case tcell.KeyESC:
+			if textView.GetText(false) != "" || !isNewChat {
+				app.SetFocus(textView)
+				textView.ScrollToBeginning()
+			}
 		case tcell.KeyEnter:
 			content := textArea.GetText()
 			if strings.TrimSpace(content) == "" {
@@ -363,7 +371,8 @@ func main() {
 		return event
 	})
 
-	button := tview.NewButton("+ New chat").SetSelectedFunc(func() {
+	button := tview.NewButton("+ New chat")
+	button.SetFocusFunc(func() {
 		isNewChat = true
 		textView.Clear()
 		app.SetFocus(textArea)
