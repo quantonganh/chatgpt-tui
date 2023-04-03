@@ -11,6 +11,12 @@ and receive responses from the chatbot.
 
 You can download the latest binary from the [release page](https://github.com/quantonganh/chatgpt/releases).
 
+### Install via homebrew
+
+```
+brew install quantonganh/tap/chatgpt
+```
+
 ### Install via go
 
 ```
