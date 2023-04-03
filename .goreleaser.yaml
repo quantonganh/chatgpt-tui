@@ -50,3 +50,12 @@ changelog:
 # Feel free to remove those if you don't want/use them.
 # yaml-language-server: $schema=https://goreleaser.com/static/schema.json
 # vim: set ts=2 sw=2 tw=0 fo=cnqoj
+
+brews:
+  - tap:
+      owner: quantonganh
+      name: homebrew-tap
+    homepage: https://github.com/quantonganh/chatgpt
+    description: >-
+      A simple terminal UI for ChatGPT, written in Go with the tview library.
+    license: MIT
