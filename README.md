@@ -25,11 +25,18 @@ go install github.com/quantonganh/chatgpt@latest
 
 ## Usage
 
+- Create your API key: https://platform.openai.com/account/api-keys
+- Set your `OPENAI_API_KEY` environment variable using [fish shell](https://fishshell.com/docs/current/cmds/set.html):
+
+```go
+set -Ux OPENAI_API_KEY your-key
+```
+
 Once you have started the ChatGPT terminal UI application, you will see a text box at the bottom of the screen where you can type your messages to ChatGPT. Press the Enter key to send your message to the chatbot.
 
 ChatGPT will respond to your message in the main area of the screen. You can continue to send messages and receive responses from the chatbot in this way.
 
-If you want to quit the application, you can press the `esc` key.
+If you want to quit the application, you can press the `ctrl-c`.
 
 ## Credits
 
