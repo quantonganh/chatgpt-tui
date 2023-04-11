@@ -135,11 +135,11 @@ func main() {
 	deleteTitleModal := tview.NewModal()
 	deleteTitleModal.AddButtons([]string{buttonCancel, buttonDelete})
 
-	modal := func(p tview.Primitive, currentIndex int) tview.Primitive {
+	modal := func(p tview.Primitive, currentRow int) tview.Primitive {
 		return tview.NewFlex().SetDirection(tview.FlexRow).
 			AddItem(tview.NewFlex().SetDirection(tview.FlexColumn).
 				AddItem(tview.NewFlex().SetDirection(tview.FlexRow).
-					AddItem(nil, 4+(currentIndex*2), 1, false).
+					AddItem(nil, 4+(currentRow*2), 1, false).
 					AddItem(p, 1, 1, true).
 					AddItem(nil, 0, 1, false), 0, 1, true).
 				AddItem(tview.NewFlex().SetDirection(tview.FlexRow).
@@ -148,20 +148,30 @@ func main() {
 			AddItem(nil, 1, 1, false)
 	}
 
+	var hiddenItemCount int
 	list.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		currentIndex := list.GetCurrentItem()
-		currentTitle, _ := list.GetItemText(currentIndex)
+		_, _, _, height := list.GetInnerRect()
 
 		switch event.Rune() {
 		case 'j':
 			if list.GetCurrentItem() < list.GetItemCount() {
 				list.SetCurrentItem(list.GetCurrentItem() + 1)
 			}
+
+			if list.GetCurrentItem() >= height/2 {
+				hiddenItemCount = list.GetCurrentItem() + 1 - (height / 2)
+			}
 		case 'k':
 			if list.GetCurrentItem() > 0 {
 				list.SetCurrentItem(list.GetCurrentItem() - 1)
 			}
+
+			if list.GetCurrentItem()+1 == hiddenItemCount {
+				hiddenItemCount--
+			}
 		case 'e':
+			currentIndex := list.GetCurrentItem()
+			currentTitle, _ := list.GetItemText(currentIndex)
 			editTitleInputField.
 				SetText(currentTitle).
 				SetDoneFunc(func(key tcell.Key) {
@@ -198,9 +208,12 @@ func main() {
 					}
 				}).
 				SetBorder(false)
-			pages.AddPage(pageEditTitle, modal(editTitleInputField, currentIndex), true, false)
+			pages.AddPage(pageEditTitle, modal(editTitleInputField, list.GetCurrentItem()-hiddenItemCount), true, false)
 			pages.ShowPage(pageEditTitle)
 		case 'd':
+			currentIndex := list.GetCurrentItem()
+			currentTitle, _ := list.GetItemText(currentIndex)
+
 			deleteTitleModal.SetText(fmt.Sprintf("Are you sure you want to delete \"%s\"?", currentTitle)).
 				SetFocus(0).
 				SetDoneFunc(func(buttonIndex int, buttonLabel string) {
