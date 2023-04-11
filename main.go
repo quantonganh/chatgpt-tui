@@ -149,8 +149,60 @@ func main() {
 			AddItem(nil, 1, 1, false)
 	}
 
+	searchInputField := tview.NewInputField()
+	searchInputField.SetTitle("Search")
+	searchInputField.
+		SetFieldWidth(50).
+		SetAcceptanceFunc(tview.InputFieldMaxLength(50))
+	searchInputField.SetBorder(true)
+	searchInputField.SetDoneFunc(func(key tcell.Key) {
+		switch key {
+		case tcell.KeyEnter:
+			titles := make([]string, 0, len(m))
+			db.View(func(tx *buntdb.Tx) error {
+				err := tx.Descend("time", func(key, value string) bool {
+					titles = append(titles, key)
+					return true
+				})
+				return err
+			})
+
+			text := searchInputField.GetText()
+			if text != "" {
+				idx := make(index)
+				idx.add(titles)
+				r := idx.search(text)
+				list.Clear()
+				for _, i := range r {
+					list.AddItem(titles[i], "", rune(0), func() {
+						if c, ok := m[titles[i]]; ok {
+							textView.SetText(toConversation(c.Messages))
+						}
+					})
+				}
+			} else {
+				list.Clear()
+				for i := range titles {
+					list.AddItem(titles[i], "", rune(0), func() {
+						if c, ok := m[titles[i]]; ok {
+							textView.SetText(toConversation(c.Messages))
+						}
+					})
+				}
+			}
+			if list.GetItemCount() > 0 {
+				app.SetFocus(list)
+			}
+		}
+	})
+
 	var hiddenItemCount int
 	list.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		switch event.Key() {
+		case tcell.KeyESC:
+			app.SetFocus(searchInputField)
+		}
+
 		_, _, _, height := list.GetInnerRect()
 
 		switch event.Rune() {
@@ -398,24 +450,20 @@ func main() {
 		return event
 	})
 
-	button := tview.NewButton("+ New chat")
-	button.SetFocusFunc(func() {
-		isNewChat = true
-		textView.Clear()
-		app.SetFocus(textArea)
-	})
-	button.SetBorder(true)
-
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch event.Key() {
 		case tcell.KeyF1:
-			app.SetFocus(button)
+			isNewChat = true
+			textView.Clear()
+			app.SetFocus(textArea)
 		case tcell.KeyF2:
 			app.SetFocus(list)
 		case tcell.KeyF3:
 			app.SetFocus(textView)
 		case tcell.KeyF4:
 			app.SetFocus(textArea)
+		case tcell.KeyCtrlS:
+			app.SetFocus(searchInputField)
 		default:
 			return event
 		}
@@ -423,12 +471,12 @@ func main() {
 	})
 
 	help := tview.NewTextView().SetRegions(true).SetDynamicColors(true)
-	help.SetText("F1: new chat, F2: history, F3: conversation, F4: question, enter: submit, j/k: down/up, ctrl-f/b: page down/up, e: edit, d: delete, ctrl-c: quit").SetTextAlign(tview.AlignCenter)
+	help.SetText("F1: new chat, F2: history, F3: conversation, F4: question, enter: submit, ctrl-s: search, j/k: down/up, e: edit, d: delete, ctrl-f/b: page down/up, ctrl-c: quit").SetTextAlign(tview.AlignCenter)
 
 	mainFlex := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(tview.NewFlex().SetDirection(tview.FlexColumn).
 			AddItem(tview.NewFlex().SetDirection(tview.FlexRow).
-				AddItem(button, 3, 1, false).
+				AddItem(searchInputField, 3, 1, false).
 				AddItem(list, 0, 1, false), 0, 1, false).
 			AddItem(tview.NewFlex().SetDirection(tview.FlexRow).
 				AddItem(textView, 0, 1, false).

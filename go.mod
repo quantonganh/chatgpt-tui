@@ -4,6 +4,7 @@ go 1.20
 
 require (
 	github.com/gdamore/tcell/v2 v2.6.0
+	github.com/kljensen/snowball v0.8.0
 	github.com/mitchellh/go-homedir v1.1.0
 	github.com/rivo/tview v0.0.0-20230320095235-84f9c0ff9de8
 	github.com/tidwall/buntdb v1.2.10
