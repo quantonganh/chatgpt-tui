@@ -92,8 +92,9 @@ func main() {
 
 	var (
 		m         = make(map[string]*Conversation)
-		isNewChat bool
+		isNewChat = true
 	)
+	list.SetSelectedFocusOnly(true)
 	db.View(func(tx *buntdb.Tx) error {
 		err := tx.Descend("time", func(key, value string) bool {
 			var c *Conversation
@@ -109,17 +110,13 @@ func main() {
 		return err
 	})
 
-	if list.GetItemCount() > 0 {
-		title, _ := list.GetItemText(list.GetCurrentItem())
-		textView.SetText(toConversation(m[title].Messages))
-	}
-
 	list.SetChangedFunc(func(index int, title string, secondaryText string, shortcut rune) {
 		if c, ok := m[title]; ok {
 			textView.SetText(toConversation(c.Messages))
 		}
 	})
 	list.SetSelectedFunc(func(index int, title string, secondaryText string, shortcut rune) {
+		list.SetSelectedFocusOnly(false)
 		if c, ok := m[title]; ok {
 			textView.SetText(toConversation(c.Messages))
 		}
@@ -329,6 +326,7 @@ func main() {
 
 			textView.ScrollToEnd()
 			if textView.GetText(false) != "" {
+				isNewChat = false
 				fmt.Fprintf(textView, "\n\n")
 			}
 			fmt.Fprintln(textView, "[red::]You:[-]")
@@ -451,19 +449,32 @@ func main() {
 	})
 
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if textView.GetText(false) != "" {
+			list.SetSelectedFocusOnly(false)
+		}
+
 		switch event.Key() {
 		case tcell.KeyF1:
 			isNewChat = true
+			list.SetSelectedFocusOnly(true)
 			textView.Clear()
 			app.SetFocus(textArea)
 		case tcell.KeyF2:
-			app.SetFocus(list)
+			if list.GetItemCount() > 0 {
+				app.SetFocus(list)
+				title, _ := list.GetItemText(list.GetCurrentItem())
+				textView.SetText(toConversation(m[title].Messages))
+			}
 		case tcell.KeyF3:
-			app.SetFocus(textView)
+			if textView.GetText(false) != "" {
+				app.SetFocus(textView)
+			}
 		case tcell.KeyF4:
 			app.SetFocus(textArea)
 		case tcell.KeyCtrlS:
-			app.SetFocus(searchInputField)
+			if list.GetItemCount() > 0 {
+				app.SetFocus(searchInputField)
+			}
 		default:
 			return event
 		}
