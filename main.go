@@ -300,6 +300,32 @@ func main() {
 				Content: content,
 			})
 
+			titleCh := make(chan string)
+			if list.GetItemCount() == 0 || isNewChat {
+				go func() {
+					resp, err := createChatCompletion([]Message{
+						{
+							Role:    roleUser,
+							Content: prefixSuggestTitle + content,
+						},
+					}, false)
+					if err != nil {
+						log.Panic(err)
+					}
+					defer resp.Body.Close()
+
+					body, err := io.ReadAll(resp.Body)
+					if err != nil {
+						log.Panic(err)
+					}
+
+					var titleResp *Response
+					if err := json.Unmarshal(body, &titleResp); err == nil {
+						titleCh <- titleResp.Choices[0].Message.Content
+					}
+				}()
+			}
+
 			respCh := make(chan string)
 			go func() {
 				resp, err := createChatCompletion(messages, true)
@@ -336,30 +362,6 @@ func main() {
 				})
 
 				if list.GetItemCount() == 0 || isNewChat {
-					titleCh := make(chan string)
-					go func() {
-						resp, err := createChatCompletion([]Message{
-							{
-								Role:    roleUser,
-								Content: prefixSuggestTitle + content,
-							},
-						}, false)
-						if err != nil {
-							log.Panic(err)
-						}
-						defer resp.Body.Close()
-
-						body, err := io.ReadAll(resp.Body)
-						if err != nil {
-							log.Panic(err)
-						}
-
-						var titleResp *Response
-						if err := json.Unmarshal(body, &titleResp); err == nil {
-							titleCh <- titleResp.Choices[0].Message.Content
-						}
-					}()
-
 					list.InsertItem(0, strings.Trim(<-titleCh, "\""), "", rune(0), nil)
 					list.SetCurrentItem(0)
 
