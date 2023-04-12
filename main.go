@@ -21,6 +21,7 @@ import (
 )
 
 const (
+	roleSystem    = "system"
 	roleUser      = "user"
 	roleAssistant = "assistant"
 
@@ -282,7 +283,12 @@ func main() {
 			fmt.Fprintf(textView, "%s\n\n", content)
 
 			messages := make([]Message, 0)
-			if list.GetItemCount() > 0 && !isNewChat {
+			if isNewChat {
+				messages = append(messages, Message{
+					Role:    roleSystem,
+					Content: "You are ChatGPT, a large language model trained by OpenAI. Answer as concisely as possible.",
+				})
+			} else if list.GetItemCount() > 0 {
 				title, _ := list.GetItemText(list.GetCurrentItem())
 				if c, ok := m[title]; ok {
 					messages = c.Messages
@@ -362,9 +368,15 @@ func main() {
 
 				title, _ := list.GetItemText(list.GetCurrentItem())
 				c := &Conversation{
-					Time:     time.Now().Unix(),
-					Messages: messages,
+					Time: time.Now().Unix(),
 				}
+				// no need to save the system message into db
+				if messages[0].Role == roleSystem {
+					c.Messages = messages[1:]
+				} else {
+					c.Messages = messages
+				}
+
 				value, err := json.Marshal(c)
 				if err != nil {
 					log.Panic(err)
