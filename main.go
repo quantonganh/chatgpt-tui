@@ -11,11 +11,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/mitchellh/go-homedir"
+	"github.com/pkoukk/tiktoken-go"
 	"github.com/rivo/tview"
 	"github.com/tidwall/buntdb"
 )
@@ -25,6 +28,8 @@ const (
 	roleUser      = "user"
 	roleAssistant = "assistant"
 
+	systemMessage = "You are ChatGPT, a large language model trained by OpenAI. Answer as concisely as possible."
+
 	prefixSuggestTitle = "suggest me a short title for "
 
 	pageMain        = "main"
@@ -33,6 +38,8 @@ const (
 
 	buttonCancel = "Cancel"
 	buttonDelete = "Delete"
+
+	maxTokens = 4097
 )
 
 type Conversation struct {
@@ -314,7 +321,6 @@ func main() {
 		case tcell.KeyESC:
 			if textView.GetText(false) != "" || !isNewChat {
 				app.SetFocus(textView)
-				textView.ScrollToBeginning()
 			}
 		case tcell.KeyEnter:
 			content := textArea.GetText()
@@ -324,34 +330,14 @@ func main() {
 			textArea.SetText("", false)
 			textArea.SetDisabled(true)
 
-			textView.ScrollToEnd()
-			if textView.GetText(false) != "" {
-				isNewChat = false
-				fmt.Fprintf(textView, "\n\n")
-			}
-			fmt.Fprintln(textView, "[red::]You:[-]")
-			fmt.Fprintf(textView, "%s\n\n", content)
-
+			titleCh := make(chan string)
 			messages := make([]Message, 0)
-			if isNewChat {
+			if textView.GetText(false) == "" {
 				messages = append(messages, Message{
 					Role:    roleSystem,
-					Content: "You are ChatGPT, a large language model trained by OpenAI. Answer as concisely as possible.",
+					Content: systemMessage,
 				})
-			} else if list.GetItemCount() > 0 {
-				title, _ := list.GetItemText(list.GetCurrentItem())
-				if c, ok := m[title]; ok {
-					messages = c.Messages
-				}
-			}
 
-			messages = append(messages, Message{
-				Role:    roleUser,
-				Content: content,
-			})
-
-			titleCh := make(chan string)
-			if list.GetItemCount() == 0 || isNewChat {
 				go func() {
 					resp, err := createChatCompletion([]Message{
 						{
@@ -374,29 +360,86 @@ func main() {
 						titleCh <- titleResp.Choices[0].Message.Content
 					}
 				}()
+			} else {
+				isNewChat = false
+
+				title, _ := list.GetItemText(list.GetCurrentItem())
+				if c, ok := m[title]; ok {
+					messages = c.Messages
+				}
+
+				textView.ScrollToEnd()
+				fmt.Fprintf(textView, "\n\n")
 			}
 
+			messages = append(messages, Message{
+				Role:    roleUser,
+				Content: content,
+			})
+
+			numTokens, err := NumTokensFromMessages(messages, gpt3Dot5Turbo)
+			if err != nil {
+				log.Println(err)
+				return nil
+			}
+
+			if numTokens > maxTokens {
+				isNewChat = true
+				title, _ := list.GetItemText(list.GetCurrentItem())
+				go func() {
+					titleCh <- addSuffixNumber(title)
+				}()
+
+				messages = []Message{
+					{
+						Role:    roleSystem,
+						Content: systemMessage,
+					},
+					{
+						Role:    roleUser,
+						Content: fmt.Sprintf("%s: %s", title, content),
+					},
+				}
+
+				textView.Clear()
+			}
+
+			fmt.Fprintln(textView, "[red::]You:[-]")
+			fmt.Fprintf(textView, "%s\n\n", content)
+
 			respCh := make(chan string)
+			errCh := make(chan error, 1)
 			go func() {
 				resp, err := createChatCompletion(messages, true)
 				if err != nil {
-					log.Panic(err)
+					errCh <- err
 				}
 
 				reader := bufio.NewReader(resp.Body)
 				for {
 					line, err := reader.ReadBytes('\n')
-					if err == nil {
-						var streamingResp *StreamingResponse
-						if err := json.Unmarshal(bytes.TrimPrefix(line, []byte("data: ")), &streamingResp); err == nil {
-							respCh <- streamingResp.Choices[0].Delta.Content
+					if err != nil {
+						if errors.Is(err, io.EOF) {
+							close(respCh)
+							return
+						} else {
+							errCh <- err
 						}
-					} else if errors.Is(err, io.EOF) {
-						close(respCh)
-						return
+					}
+
+					var streamingResp *StreamingResponse
+					if err := json.Unmarshal(bytes.TrimPrefix(line, []byte("data: ")), &streamingResp); err == nil {
+						respCh <- streamingResp.Choices[0].Delta.Content
 					}
 				}
 			}()
+
+			select {
+			case err := <-errCh:
+				log.Println("received error:", err)
+				return nil
+			default:
+			}
 
 			fmt.Fprintln(textView, "[green::]ChatGPT:[-]")
 			go func() {
@@ -502,11 +545,47 @@ func main() {
 	}
 }
 
-const completionsURL = "https://api.openai.com/v1/chat/completions"
+func NumTokensFromMessages(messages []Message, model string) (int, error) {
+	t, err := tiktoken.EncodingForModel(model)
+	if err != nil {
+		return 0, err
+	}
+
+	var tokensPerMessage int
+	if model == gpt3Dot5Turbo {
+		tokensPerMessage = 4
+	} else {
+		tokensPerMessage = 3
+	}
+
+	numTokens := 0
+	for _, message := range messages {
+		numTokens += tokensPerMessage
+		numTokens += len(t.Encode(message.Content, nil, nil))
+		numTokens += len(t.Encode(message.Role, nil, nil))
+	}
+	numTokens += 3
+	return numTokens, nil
+}
+
+func addSuffixNumber(title string) string {
+	re := regexp.MustCompile(`(.*)\s-\s(\d+)$`)
+	match := re.FindStringSubmatch(title)
+	if match == nil {
+		return fmt.Sprintf("%s - %d", title, 2)
+	}
+	suffixNumber, _ := strconv.Atoi(match[2])
+	return fmt.Sprintf("%s - %d", match[1], suffixNumber+1)
+}
+
+const (
+	completionsURL = "https://api.openai.com/v1/chat/completions"
+	gpt3Dot5Turbo  = "gpt-3.5-turbo"
+)
 
 func createChatCompletion(messages []Message, stream bool) (*http.Response, error) {
 	reqBody, err := json.Marshal(&Request{
-		Model:    "gpt-3.5-turbo",
+		Model:    gpt3Dot5Turbo,
 		Messages: messages,
 		Stream:   stream,
 	})
