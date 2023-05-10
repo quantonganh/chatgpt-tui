@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
@@ -42,6 +43,8 @@ const (
 	maxTokens = 4097
 )
 
+var errTimeout = errors.New("timeout")
+
 type Conversation struct {
 	Time     int64     `json:"time"`
 	Messages []Message `json:"messages"`
@@ -64,7 +67,23 @@ func main() {
 		log.Panic(err)
 	}
 
-	db, err := buntdb.Open(filepath.Join(dbPath, "history.db"))
+	dbFile := filepath.Join(dbPath, "history.db")
+	f, err := os.OpenFile(dbFile, os.O_RDWR|os.O_CREATE, 0640)
+	if err != nil {
+		log.Panic(err)
+	}
+	defer f.Close()
+
+	if err := flock(f, 1*time.Second); err != nil {
+		if errors.Is(err, errTimeout) {
+			fmt.Println("Another process is already running.")
+		} else {
+			fmt.Println(err)
+		}
+		return
+	}
+
+	db, err := buntdb.Open(dbFile)
 	if err != nil {
 		log.Panic(err)
 	}
@@ -542,6 +561,28 @@ func main() {
 		AddPage(pageDeleteTitle, deleteTitleModal, true, false)
 	if err := app.SetRoot(pages, true).SetFocus(textArea).Run(); err != nil {
 		panic(err)
+	}
+}
+
+func flock(f *os.File, timeout time.Duration) error {
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+			if err == nil {
+				return nil
+			} else if err != syscall.EWOULDBLOCK {
+				return err
+			}
+		case <-timer.C:
+			return errTimeout
+		}
 	}
 }
 
