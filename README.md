@@ -28,7 +28,7 @@ go install github.com/quantonganh/chatgpt@latest
 - Create your API key: https://platform.openai.com/account/api-keys
 - Set your `OPENAI_API_KEY` environment variable using [fish shell](https://fishshell.com/docs/current/cmds/set.html):
 
-```go
+```shell
 set -Ux OPENAI_API_KEY your-key
 ```
 
