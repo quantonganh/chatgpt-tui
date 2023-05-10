@@ -42,6 +42,8 @@ const (
 	maxTokens = 4097
 )
 
+var errTimeout = errors.New("timeout")
+
 type Conversation struct {
 	Time     int64     `json:"time"`
 	Messages []Message `json:"messages"`
@@ -64,7 +66,23 @@ func main() {
 		log.Panic(err)
 	}
 
-	db, err := buntdb.Open(filepath.Join(dbPath, "history.db"))
+	dbFile := filepath.Join(dbPath, "history.db")
+	f, err := os.OpenFile(dbFile, os.O_RDWR|os.O_CREATE, 0640)
+	if err != nil {
+		log.Panic(err)
+	}
+	defer f.Close()
+
+	if err := flock(f, 1*time.Second); err != nil {
+		if errors.Is(err, errTimeout) {
+			fmt.Println("Another process is already running.")
+		} else {
+			fmt.Println(err)
+		}
+		return
+	}
+
+	db, err := buntdb.Open(dbFile)
 	if err != nil {
 		log.Panic(err)
 	}
