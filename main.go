@@ -35,9 +35,12 @@ const (
 	pageMain        = "main"
 	pageEditTitle   = "editTitle"
 	pageDeleteTitle = "deleteTitle"
+	pageError       = "error"
 
 	buttonCancel = "Cancel"
 	buttonDelete = "Delete"
+
+	buttonOK = "OK"
 
 	maxTokens = 4097
 )
@@ -334,6 +337,9 @@ func main() {
 		return event
 	})
 
+	errorModal := tview.NewModal()
+	errorModal.AddButtons([]string{buttonOK})
+
 	textArea.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch event.Key() {
 		case tcell.KeyESC:
@@ -348,7 +354,7 @@ func main() {
 			textArea.SetText("", false)
 			textArea.SetDisabled(true)
 
-			titleCh := make(chan string)
+			var title string
 			messages := make([]Message, 0)
 			if textView.GetText(false) == "" {
 				messages = append(messages, Message{
@@ -356,28 +362,49 @@ func main() {
 					Content: systemMessage,
 				})
 
-				go func() {
-					resp, err := createChatCompletion([]Message{
-						{
-							Role:    roleUser,
-							Content: prefixSuggestTitle + content,
-						},
-					}, false)
-					if err != nil {
+				resp, err := createChatCompletion([]Message{
+					{
+						Role:    roleUser,
+						Content: prefixSuggestTitle + content,
+					},
+				}, false)
+				if err != nil {
+					log.Panic(err)
+				}
+				defer resp.Body.Close()
+
+				body, err := io.ReadAll(resp.Body)
+				if err != nil {
+					log.Panic(err)
+				}
+
+				var titleResp *Response
+				if err := json.Unmarshal(body, &titleResp); err != nil {
+					log.Panic(err)
+				}
+
+				if len(titleResp.Choices) == 0 {
+					var chatErr *ChatError
+					if err := json.Unmarshal(body, &chatErr); err != nil {
 						log.Panic(err)
 					}
-					defer resp.Body.Close()
 
-					body, err := io.ReadAll(resp.Body)
-					if err != nil {
-						log.Panic(err)
-					}
+					errorModal.
+						SetText(chatErr.Error.Message).
+						SetFocus(0).
+						SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+							if buttonLabel == buttonOK {
+								pages.HidePage(pageError)
+								app.SetRoot(pages, true).SetFocus(textArea)
+							}
+						})
+					pages.AddPage(pageError, errorModal, true, true)
+					textArea.SetDisabled(false)
 
-					var titleResp *Response
-					if err := json.Unmarshal(body, &titleResp); err == nil {
-						titleCh <- titleResp.Choices[0].Message.Content
-					}
-				}()
+					return nil
+				} else {
+					title = titleResp.Choices[0].Message.Content
+				}
 			} else {
 				isNewChat = false
 
@@ -403,10 +430,8 @@ func main() {
 
 			if numTokens > maxTokens {
 				isNewChat = true
-				title, _ := list.GetItemText(list.GetCurrentItem())
-				go func() {
-					titleCh <- addSuffixNumber(title)
-				}()
+				currentTitle, _ := list.GetItemText(list.GetCurrentItem())
+				title = addSuffixNumber(currentTitle)
 
 				messages = []Message{
 					{
@@ -422,18 +447,48 @@ func main() {
 				textView.Clear()
 			}
 
+			resp, err := createChatCompletion(messages, true)
+			if err != nil {
+				log.Println(err)
+				return nil
+			}
+
+			reader := bufio.NewReader(resp.Body)
+
+			data, err := io.ReadAll(reader)
+			if err != nil {
+				log.Println(err)
+				return nil
+			}
+
+			var chatErr *ChatError
+			if err := json.Unmarshal(data, &chatErr); err != nil {
+				log.Println(err)
+				return nil
+			}
+
+			if chatErr.Error.Message != "" {
+				errorModal.
+					SetText(chatErr.Error.Message).
+					SetFocus(0).
+					SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+						if buttonLabel == buttonOK {
+							pages.HidePage(pageError)
+							app.SetRoot(pages, true).SetFocus(textArea)
+						}
+					})
+				pages.AddPage(pageError, errorModal, true, true)
+				textArea.SetDisabled(false)
+
+				return nil
+			}
+
 			fmt.Fprintln(textView, "[red::]You:[-]")
 			fmt.Fprintf(textView, "%s\n\n", content)
 
 			respCh := make(chan string)
 			errCh := make(chan error, 1)
 			go func() {
-				resp, err := createChatCompletion(messages, true)
-				if err != nil {
-					errCh <- err
-				}
-
-				reader := bufio.NewReader(resp.Body)
 				for {
 					line, err := reader.ReadBytes('\n')
 					if err != nil {
@@ -446,9 +501,11 @@ func main() {
 					}
 
 					var streamingResp *StreamingResponse
-					if err := json.Unmarshal(bytes.TrimPrefix(line, []byte("data: ")), &streamingResp); err == nil {
-						respCh <- streamingResp.Choices[0].Delta.Content
+					if err := json.Unmarshal(bytes.TrimPrefix(line, []byte("data: ")), &streamingResp); err != nil {
+						errCh <- err
 					}
+
+					respCh <- streamingResp.Choices[0].Delta.Content
 				}
 			}()
 
@@ -473,7 +530,7 @@ func main() {
 				})
 
 				if list.GetItemCount() == 0 || isNewChat {
-					list.InsertItem(0, strings.Trim(<-titleCh, "\""), "", rune(0), nil)
+					list.InsertItem(0, strings.Trim(title, "\""), "", rune(0), nil)
 					list.SetCurrentItem(0)
 
 					isNewChat = false
@@ -664,6 +721,14 @@ type StreamingResponse struct {
 		Index        int         `json:"index"`
 		FinishReason interface{} `json:"finish_reason"`
 	} `json:"choices"`
+}
+
+type ChatError struct {
+	Error struct {
+		Message string `json:"message"`
+		Type    string `json:"type"`
+		Code    string `json:"code"`
+	}
 }
 
 func toConversation(messages []Message) string {
