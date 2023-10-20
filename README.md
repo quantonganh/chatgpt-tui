@@ -14,7 +14,7 @@ You can download the latest binary from the [release page](https://github.com/qu
 ### Install via homebrew
 
 ```
-brew install quantonganh/tap/chatgpt
+brew install quantonganh/tap/chatgpt-tui
 ```
 
 ### Install via go
