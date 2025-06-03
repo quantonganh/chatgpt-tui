@@ -53,8 +53,8 @@ type Conversation struct {
 func main() {
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	if apiKey == "" {
-		fmt.Println("Please set `OPENAI_API_KEY` environment variable. You can find your API key at https://platform.openai.com/account/api-keys.")
-		return
+		fmt.Fprintln(os.Stderr, "Please set `OPENAI_API_KEY` environment variable. You can find your API key at https://platform.openai.com/account/api-keys.")
+		os.Exit(1)
 	}
 
 	home, err := homedir.Dir()
